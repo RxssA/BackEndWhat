@@ -12,11 +12,14 @@ let latestData = {
   heartRate: 72,
   temperature: 36.6,
   location: { lat: 53.270962, lng: -9.062691 },
-  accelerometer: { x: 0.5, y: 0.3, z: 0.8 },
+  timestamp: new Date().toISOString(),
 };
 
 app.post('/data', (req, res) => {
-  latestData = req.body;
+  latestData = {
+    ...req.body,
+    timestamp: new Date().toISOString(), // Add timestamp
+  };
 
   wsClients.forEach((client) => {
     if (client.readyState === 1) {
@@ -33,6 +36,7 @@ const wsClients = new Set();
 wsServer.on('connection', (ws) => {
   wsClients.add(ws);
 
+  // Send the latest data including the timestamp
   ws.send(JSON.stringify(latestData));
 
   ws.on('close', () => wsClients.delete(ws));
