@@ -10,7 +10,7 @@ const port = 4000;
 app.use(express.json());
 app.use(cors());
 
-const url = `mongodb+srv://rossarmo99:Kwp20201!@whatproject.bpv1d.mongodb.net/?retryWrites=true&w=majority&appName=WHATProject`;
+const url =  process.env.MONGODB_URI;
 const client = new MongoClient(url);
 
 app.get('/data/last10', async (req, res) => {
@@ -18,7 +18,6 @@ app.get('/data/last10', async (req, res) => {
     const db = client.db('WHATProject');
     const collection = db.collection('sensorData');
     const data = await collection.find({}).sort({ timestamp: -1 }).limit(10).toArray();
-
     res.json(data.reverse());
   } catch (error) {
     console.error('Error fetching last 10 values from MongoDB:', error);
@@ -70,32 +69,18 @@ async function run() {
       }
     });
 
-    // GET endpoint for the last 10 minutes of data
-   /* app.get('/data/last10minutes', async (req, res) => {
-      try {
-        const db = client.db('WHATProject');
-        const collection = db.collection('sensorData');
-        const tenMinutesAgo = new Date(Date.now() - 10 * 60 * 1000);
-        const data = await collection.find({ timestamp: { $gte: tenMinutesAgo } }).toArray();
-        res.json(data);
-      } catch (error) {
-        console.error('Error fetching data from MongoDB:', error);
-        res.status(500).json({ status: 'error', message: 'Failed to fetch data' });
-      }
-    });*/
-
     // WebSocket setup
     const wsServer = new WebSocketServer({ noServer: true });
     const wsClients = new Set();
 
     wsServer.on('connection', (ws) => {
       wsClients.add(ws);
-      ws.send(JSON.stringify(latestData)); // Send latest data to new clients
+      ws.send(JSON.stringify(latestData)); 
 
       ws.on('close', () => wsClients.delete(ws));
     });
 
-    const host = '192.168.1.14';
+    const host = '192.168.0.23';
     const server = app.listen(port, host, () => {
       console.log(`Server running at http://${host}:${port}`);
     });
