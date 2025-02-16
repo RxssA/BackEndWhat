@@ -2,17 +2,24 @@ const express = require('express');
 const { MongoClient } = require('mongodb');
 const cors = require('cors');
 const { WebSocket, WebSocketServer } = require('ws');
+const bcrypt = require('bcryptjs');
+const jwt = require('jsonwebtoken');
 require('dotenv').config();
 
 const app = express();
 const port = 4000;
+const SECRET_KEY = "your_secret_key"; // Change this to a secure secret key
 
 app.use(express.json());
 app.use(cors());
 
-const url =  process.env.MONGODB_URI;
-const client = new MongoClient(url);
+const url = process.env.MONGODB_URI;
+const client = new MongoClient(url, {
+  tls: true,
+  tlsAllowInvalidCertificates: true, // Bypass certificate validation (for testing)
+});
 
+// Fetch last 10 sensor data entries
 app.get('/data/last10', async (req, res) => {
   try {
     const db = client.db('WHATProject');
@@ -34,11 +41,10 @@ let latestData = {
 
 async function run() {
   try {
-    // Connect to MongoDB
     await client.connect();
     console.log('Successfully connected to MongoDB Atlas');
 
-    // POST endpoint to receive and save data to MongoDB
+    // POST endpoint to receive and save sensor data
     app.post('/data', async (req, res) => {
       if (!req.body || !req.body.heartRate || !req.body.temperature || !req.body.location) {
         return res.status(400).json({ status: 'error', message: 'Invalid data!' });
@@ -50,12 +56,11 @@ async function run() {
       };
 
       try {
-        const db = client.db('WHATProject')
-        const collection = db.collection('sensorData'); 
-        await collection.insertOne(latestData); // Insert the data into MongoDB
+        const db = client.db('WHATProject');
+        const collection = db.collection('sensorData');
+        await collection.insertOne(latestData);
         console.log('Data inserted into MongoDB');
 
-        // Broadcast the data to all WebSocket clients
         wsClients.forEach((client) => {
           if (client.readyState === WebSocket.OPEN) {
             client.send(JSON.stringify(latestData));
@@ -69,13 +74,66 @@ async function run() {
       }
     });
 
+    // User Signup
+    app.post('/signup', async (req, res) => {
+      const { name, password, age, weight, gender } = req.body;
+
+      if (!name || !password || !age || !weight || !gender) {
+        return res.status(400).json({ status: 'error', message: 'All fields are required!' });
+      }
+
+      try {
+        const db = client.db('WHATProject');
+        const users = db.collection('users');
+
+        const existingUser = await users.findOne({ name });
+        if (existingUser) {
+          return res.status(400).json({ status: 'error', message: 'User already exists!' });
+        }
+
+        const hashedPassword = await bcrypt.hash(password, 10);
+        await users.insertOne({ name, password: hashedPassword, age, weight, gender });
+
+        res.json({ status: 'success', message: 'User registered successfully!' });
+      } catch (error) {
+        console.error('Error signing up:', error);
+        res.status(500).json({ status: 'error', message: 'Server error' });
+      }
+    });
+
+    // User Login
+    app.post('/login', async (req, res) => {
+      const { name, password } = req.body;
+
+      try {
+        const db = client.db('WHATProject');
+        const users = db.collection('users');
+
+        const user = await users.findOne({ name });
+        if (!user) {
+          return res.status(400).json({ status: 'error', message: 'User not found!' });
+        }
+
+        const isMatch = await bcrypt.compare(password, user.password);
+        if (!isMatch) {
+          return res.status(400).json({ status: 'error', message: 'Invalid credentials!' });
+        }
+
+        const token = jwt.sign({ id: user._id, name: user.name }, SECRET_KEY, { expiresIn: '1h' });
+        res.json({ status: 'success', token });
+      } catch (error) {
+        console.error('Error logging in:', error);
+        res.status(500).json({ status: 'error', message: 'Server error' });
+      }
+    });
+
     // WebSocket setup
     const wsServer = new WebSocketServer({ noServer: true });
     const wsClients = new Set();
 
     wsServer.on('connection', (ws) => {
       wsClients.add(ws);
-      ws.send(JSON.stringify(latestData)); 
+      ws.send(JSON.stringify(latestData));
 
       ws.on('close', () => wsClients.delete(ws));
     });
@@ -90,7 +148,6 @@ async function run() {
         wsServer.emit('connection', ws, req);
       });
     });
-
   } catch (err) {
     console.error(err.stack);
   }
