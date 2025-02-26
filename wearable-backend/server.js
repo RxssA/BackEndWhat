@@ -8,28 +8,16 @@ require('dotenv').config();
 
 const app = express();
 const port = 4000;
-const SECRET_KEY = "your_secret_key"; // Change this to a secure secret key
+const SECRET_KEY = "your_secret_key";
 
 app.use(express.json());
 app.use(cors());
 
-const url = process.env.MONGODB_URI;
+// Connect to local MongoDB
+const url = process.env.MONGODB_URI || 'mongodb://127.0.0.1:27017/WHATProject';
 const client = new MongoClient(url, {
-  tls: true,
-  tlsAllowInvalidCertificates: true, // Bypass certificate validation (for testing)
-});
-
-// Fetch last 10 sensor data entries
-app.get('/data/last10', async (req, res) => {
-  try {
-    const db = client.db('WHATProject');
-    const collection = db.collection('sensorData');
-    const data = await collection.find({}).sort({ timestamp: -1 }).limit(10).toArray();
-    res.json(data.reverse());
-  } catch (error) {
-    console.error('Error fetching last 10 values from MongoDB:', error);
-    res.status(500).json({ status: 'error', message: 'Failed to fetch data' });
-  }
+  useNewUrlParser: true,
+  useUnifiedTopology: true,
 });
 
 let latestData = {
@@ -42,7 +30,21 @@ let latestData = {
 async function run() {
   try {
     await client.connect();
-    console.log('Successfully connected to MongoDB Atlas');
+    console.log('Successfully connected to local MongoDB');
+
+    const db = client.db('WHATProject');
+
+    // Fetch last 10 sensor data entries
+    app.get('/data/last10', async (req, res) => {
+      try {
+        const collection = db.collection('sensorData');
+        const data = await collection.find({}).sort({ timestamp: -1 }).limit(10).toArray();
+        res.json(data.reverse());
+      } catch (error) {
+        console.error('Error fetching last 10 values:', error);
+        res.status(500).json({ status: 'error', message: 'Failed to fetch data' });
+      }
+    });
 
     // POST endpoint to receive and save sensor data
     app.post('/data', async (req, res) => {
@@ -56,7 +58,6 @@ async function run() {
       };
 
       try {
-        const db = client.db('WHATProject');
         const collection = db.collection('sensorData');
         await collection.insertOne(latestData);
         console.log('Data inserted into MongoDB');
@@ -67,10 +68,10 @@ async function run() {
           }
         });
 
-        res.json({ status: 'success', message: 'Data updated and saved to MongoDB successfully!' });
+        res.json({ status: 'success', message: 'Data updated and saved successfully!' });
       } catch (error) {
-        console.error('Error inserting data into MongoDB:', error);
-        res.status(500).json({ status: 'error', message: 'Failed to save data to MongoDB' });
+        console.error('Error inserting data:', error);
+        res.status(500).json({ status: 'error', message: 'Failed to save data' });
       }
     });
 
@@ -83,10 +84,9 @@ async function run() {
       }
 
       try {
-        const db = client.db('WHATProject');
         const users = db.collection('users');
-
         const existingUser = await users.findOne({ name });
+
         if (existingUser) {
           return res.status(400).json({ status: 'error', message: 'User already exists!' });
         }
@@ -106,10 +106,9 @@ async function run() {
       const { name, password } = req.body;
 
       try {
-        const db = client.db('WHATProject');
         const users = db.collection('users');
-
         const user = await users.findOne({ name });
+
         if (!user) {
           return res.status(400).json({ status: 'error', message: 'User not found!' });
         }
