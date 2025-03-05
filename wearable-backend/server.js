@@ -72,6 +72,32 @@ async function run() {
         res.status(500).json({ status: 'error', message: 'Failed to save run report' });
       }
     });
+
+    app.post('/walkreport', async (req, res) => {
+      const { time, distance, path, caloriesBurned, pace } = req.body;
+      if (!time || !distance || !path) {
+        return res.status(400).json({ status: 'error', message: 'Missing Walk report data' });
+      }
+
+      const walkReport = {
+        time,
+        distance,
+        path,
+        caloriesBurned,
+        pace,
+        createdAt: new Date().toISOString(),
+        // userId: req.user.id,
+      };
+
+      try {
+        const reportsCollection = db.collection('walkReports'); // New collection for run reports
+        await reportsCollection.insertOne(walkReport);
+        res.json({ status: 'success', message: 'Walk report saved successfully!' });
+      } catch (error) {
+        console.error('Error saving run report:', error);
+        res.status(500).json({ status: 'error', message: 'Failed to save Walk report' });
+      }
+    });
     // POST endpoint to receive and save sensor data
     app.post('/data', async (req, res) => {
       if (!req.body || !req.body.heartRate || !req.body.temperature || !req.body.location) {
@@ -163,7 +189,7 @@ async function run() {
       ws.on('close', () => wsClients.delete(ws));
     });
 
-    const host = '10.12.21.3';
+    const host = '192.168.0.23';
     const server = app.listen(port, host, () => {
       console.log(`Server running at http://${host}:${port}`);
     });
