@@ -8,13 +8,13 @@ require('dotenv').config();
 
 const app = express();
 const port = 4000;
-const SECRET_KEY = "your_secret_key";
 
 app.use(express.json());
 app.use(cors());
 
 // Connect to local MongoDB
 const url = process.env.MONGODB_URI || 'mongodb://127.0.0.1:27017/WHATProject';
+const KEY = process.env.SECRET_KEY;
 const client = new MongoClient(url, {
   useNewUrlParser: true,
   useUnifiedTopology: true,
@@ -170,13 +170,43 @@ async function run() {
           return res.status(400).json({ status: 'error', message: 'Invalid credentials!' });
         }
 
-        const token = jwt.sign({ id: user._id, name: user.name }, SECRET_KEY, { expiresIn: '1h' });
+        const token = jwt.sign({ id: user._id, name: user.name }, KEY, { expiresIn: '1h' });
         res.json({ status: 'success', token });
       } catch (error) {
         console.error('Error logging in:', error);
         res.status(500).json({ status: 'error', message: 'Server error' });
       }
     });
+
+    app.get('/profile', async (req, res) => {
+      const authHeader = req.headers.authorization;
+      if (!authHeader) {
+        return res.status(401).json({ status: 'error', message: 'Unauthorized' });
+      }
+    
+      const token = authHeader.split(' ')[1]; // Extract token from "Bearer <token>"
+    
+      if (!token) {
+        return res.status(401).json({ status: 'error', message: 'Token missing' });
+      }
+    
+      try {
+        const { id } = jwt.verify(token, KEY); // Verify token
+        const users = db.collection('users');
+        const user = await users.findOne({ _id: id });
+    
+        if (!user) {
+          return res.status(404).json({ status: 'error', message: 'User not found!' });
+        }
+    
+        const { name, age, weight, gender } = user;
+        res.json({ status: 'success', user: { name, age, weight, gender } });
+      } catch (error) {
+        console.error('Error fetching profile:', error);
+        res.status(500).json({ status: 'error', message: 'Server error' });
+      }
+    });
+    
 
     // WebSocket setup
     const wsServer = new WebSocketServer({ noServer: true });
