@@ -1,5 +1,5 @@
 const express = require('express');
-const { MongoClient } = require('mongodb');
+const { MongoClient, ObjectId } = require('mongodb');
 const cors = require('cors');
 const { WebSocket, WebSocketServer } = require('ws');
 const bcrypt = require('bcryptjs');
@@ -170,7 +170,7 @@ async function run() {
           return res.status(400).json({ status: 'error', message: 'Invalid credentials!' });
         }
 
-        const token = jwt.sign({ id: user._id, name: user.name }, KEY, { expiresIn: '1h' });
+        const token = jwt.sign({ id: user._id.toString(), name: user.name }, KEY, { expiresIn: '1h' });
         res.json({ status: 'success', token });
       } catch (error) {
         console.error('Error logging in:', error);
@@ -191,9 +191,9 @@ async function run() {
       }
     
       try {
-        const { id } = jwt.verify(token, KEY); // Verify token
+        const { id } = jwt.verify(token, KEY);
         const users = db.collection('users');
-        const user = await users.findOne({ _id: id });
+        const user = await users.findOne({ _id: new ObjectId(id) }); // Convert id to ObjectId
     
         if (!user) {
           return res.status(404).json({ status: 'error', message: 'User not found!' });
