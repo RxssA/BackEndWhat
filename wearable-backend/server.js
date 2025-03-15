@@ -45,10 +45,19 @@ async function run() {
         res.status(500).json({ status: 'error', message: 'Failed to fetch data' });
       }
     });
+
+    app.get("/runreports", authenticateToken, async (req, res) => {
+      try {
+        const reportsCollection = client.db('WHATProject').collection('runReports');
+        const reports = await reportsCollection.find({ userId: req.user.id }).toArray();
+        res.json(reports);
+      } catch (error) {
+        res.status(500).json({ message: "Error fetching walk reports" });
+      }
+    });
     // POST endpoint to save a run report
     app.post('/runreport', async (req, res) => {
       const { time, distance, path, caloriesBurned, pace } = req.body;
-      // Validate required fields (add more validations as needed)
       if (!time || !distance || !path) {
         return res.status(400).json({ status: 'error', message: 'Missing run report data' });
       }
@@ -60,7 +69,7 @@ async function run() {
         caloriesBurned,
         pace,
         createdAt: new Date().toISOString(),
-        // userId: req.user.id,
+        userId: req.user.id,
       };
 
       try {
@@ -73,12 +82,43 @@ async function run() {
       }
     });
 
-    app.post('/walkreport', async (req, res) => {
+    const authenticateToken = (req, res, next) => {
+      const authHeader = req.headers.authorization;
+      if (!authHeader) {
+        return res.status(401).json({ message: 'Unauthorized: No token provided' });
+      }
+    
+      const token = authHeader.split(' ')[1];
+      if (!token) {
+        return res.status(401).json({ message: 'Unauthorized: Token missing' });
+      }
+    
+      jwt.verify(token, KEY, (err, user) => {
+        if (err) {
+          return res.status(403).json({ message: 'Forbidden: Invalid or expired token' });
+        }
+        console.log('Authenticated User:', user); // Debugging output
+        req.user = user;
+        next();
+      });
+    };
+    
+    app.get("/walkreports", authenticateToken, async (req, res) => {
+      try {
+        const reportsCollection = client.db('WHATProject').collection('walkReports'); // Correct collection
+        const reports = await reportsCollection.find({ userId: req.user.id }).toArray();
+        res.json(reports);
+      } catch (error) {
+        res.status(500).json({ message: "Error fetching walk reports" });
+      }
+    });
+    app.post('/walkreport', authenticateToken, async (req, res) => {
       const { time, distance, path, caloriesBurned, pace } = req.body;
+    
       if (!time || !distance || !path) {
         return res.status(400).json({ status: 'error', message: 'Missing Walk report data' });
       }
-
+    
       const walkReport = {
         time,
         distance,
@@ -86,18 +126,19 @@ async function run() {
         caloriesBurned,
         pace,
         createdAt: new Date().toISOString(),
-        // userId: req.user.id,
+        userId: req.user.id,  // req.user should now be defined
       };
-
+    
       try {
-        const reportsCollection = db.collection('walkReports'); // New collection for run reports
+        const reportsCollection = db.collection('walkReports');
         await reportsCollection.insertOne(walkReport);
         res.json({ status: 'success', message: 'Walk report saved successfully!' });
       } catch (error) {
-        console.error('Error saving run report:', error);
+        console.error('Error saving walk report:', error);
         res.status(500).json({ status: 'error', message: 'Failed to save Walk report' });
       }
     });
+    
     // POST endpoint to receive and save sensor data
     app.post('/data', async (req, res) => {
       if (!req.body || !req.body.heartRate || !req.body.temperature || !req.body.location) {
@@ -183,22 +224,22 @@ async function run() {
       if (!authHeader) {
         return res.status(401).json({ status: 'error', message: 'Unauthorized' });
       }
-    
+
       const token = authHeader.split(' ')[1]; // Extract token from "Bearer <token>"
-    
+
       if (!token) {
         return res.status(401).json({ status: 'error', message: 'Token missing' });
       }
-    
+
       try {
         const { id } = jwt.verify(token, KEY);
         const users = db.collection('users');
         const user = await users.findOne({ _id: new ObjectId(id) }); // Convert id to ObjectId
-    
+
         if (!user) {
           return res.status(404).json({ status: 'error', message: 'User not found!' });
         }
-    
+
         const { name, age, weight, gender } = user;
         res.json({ status: 'success', user: { name, age, weight, gender } });
       } catch (error) {
@@ -206,7 +247,7 @@ async function run() {
         res.status(500).json({ status: 'error', message: 'Server error' });
       }
     });
-    
+
 
     // WebSocket setup
     const wsServer = new WebSocketServer({ noServer: true });
