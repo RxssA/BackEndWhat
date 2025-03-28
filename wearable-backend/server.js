@@ -34,6 +34,28 @@ async function run() {
 
     const db = client.db('WHATProject');
 
+    // Authentication middleware
+    const authenticateToken = (req, res, next) => {
+      const authHeader = req.headers.authorization;
+      if (!authHeader) {
+        return res.status(401).json({ message: 'Unauthorized: No token provided' });
+      }
+    
+      const token = authHeader.split(' ')[1];
+      if (!token) {
+        return res.status(401).json({ message: 'Unauthorized: Token missing' });
+      }
+    
+      jwt.verify(token, KEY, (err, user) => {
+        if (err) {
+          return res.status(403).json({ message: 'Forbidden: Invalid or expired token' });
+        }
+        console.log('Authenticated User:', user); // Debugging output
+        req.user = user;
+        next();
+      });
+    };
+
     // Fetch last 10 sensor data entries
     app.get('/data/last10', async (req, res) => {
       try {
@@ -56,9 +78,9 @@ async function run() {
       }
     });
     // POST endpoint to save a run report
-    app.post('/runreport', async (req, res) => {
-      const { time, distance, path, caloriesBurned, pace } = req.body;
-      if (!time || !distance || !path) {
+    app.post('/runreport', authenticateToken, async (req, res) => {
+      const { time, distance, path, caloriesBurned, pace, startTime, endTime } = req.body;
+      if (!time || !distance || !path || !startTime || !endTime) {
         return res.status(400).json({ status: 'error', message: 'Missing run report data' });
       }
 
@@ -68,12 +90,14 @@ async function run() {
         path,
         caloriesBurned,
         pace,
+        startTime,
+        endTime,
         createdAt: new Date().toISOString(),
         userId: req.user.id,
       };
 
       try {
-        const reportsCollection = db.collection('runReports'); // New collection for run reports
+        const reportsCollection = db.collection('runReports');
         await reportsCollection.insertOne(runReport);
         res.json({ status: 'success', message: 'Run report saved successfully!' });
       } catch (error) {
@@ -82,30 +106,9 @@ async function run() {
       }
     });
 
-    const authenticateToken = (req, res, next) => {
-      const authHeader = req.headers.authorization;
-      if (!authHeader) {
-        return res.status(401).json({ message: 'Unauthorized: No token provided' });
-      }
-    
-      const token = authHeader.split(' ')[1];
-      if (!token) {
-        return res.status(401).json({ message: 'Unauthorized: Token missing' });
-      }
-    
-      jwt.verify(token, KEY, (err, user) => {
-        if (err) {
-          return res.status(403).json({ message: 'Forbidden: Invalid or expired token' });
-        }
-        console.log('Authenticated User:', user); // Debugging output
-        req.user = user;
-        next();
-      });
-    };
-    
     app.get("/walkreports", authenticateToken, async (req, res) => {
       try {
-        const reportsCollection = client.db('WHATProject').collection('walkReports'); // Correct collection
+        const reportsCollection = client.db('WHATProject').collection('walkReports');
         const reports = await reportsCollection.find({ userId: req.user.id }).toArray();
         res.json(reports);
       } catch (error) {
@@ -113,9 +116,9 @@ async function run() {
       }
     });
     app.post('/walkreport', authenticateToken, async (req, res) => {
-      const { time, distance, path, caloriesBurned, pace } = req.body;
+      const { time, distance, path, caloriesBurned, pace, startTime, endTime } = req.body;
     
-      if (!time || !distance || !path) {
+      if (!time || !distance || !path || !startTime || !endTime) {
         return res.status(400).json({ status: 'error', message: 'Missing Walk report data' });
       }
     
@@ -125,8 +128,10 @@ async function run() {
         path,
         caloriesBurned,
         pace,
+        startTime,
+        endTime,
         createdAt: new Date().toISOString(),
-        userId: req.user.id,  // req.user should now be defined
+        userId: req.user.id,
       };
     
       try {
@@ -170,9 +175,9 @@ async function run() {
 
     // User Signup
     app.post('/signup', async (req, res) => {
-      const { name, password, age, weight, gender } = req.body;
+      const { name, password, age, weight, gender, height } = req.body;
 
-      if (!name || !password || !age || !weight || !gender) {
+      if (!name || !password || !age || !weight || !gender || !height) {
         return res.status(400).json({ status: 'error', message: 'All fields are required!' });
       }
 
@@ -185,7 +190,14 @@ async function run() {
         }
 
         const hashedPassword = await bcrypt.hash(password, 10);
-        await users.insertOne({ name, password: hashedPassword, age, weight, gender });
+        await users.insertOne({ 
+          name, 
+          password: hashedPassword, 
+          age, 
+          weight, 
+          gender,
+          height 
+        });
 
         res.json({ status: 'success', message: 'User registered successfully!' });
       } catch (error) {
@@ -222,31 +234,32 @@ async function run() {
     app.get('/profile', async (req, res) => {
       const authHeader = req.headers.authorization;
       if (!authHeader) {
-        return res.status(401).json({ status: 'error', message: 'Unauthorized' });
+          return res.status(401).json({ status: 'error', message: 'Unauthorized' });
       }
-
-      const token = authHeader.split(' ')[1]; // Extract token from "Bearer <token>"
-
+  
+      const token = authHeader.split(' ')[1];
       if (!token) {
-        return res.status(401).json({ status: 'error', message: 'Token missing' });
+          return res.status(401).json({ status: 'error', message: 'Token missing' });
       }
-
+  
       try {
-        const { id } = jwt.verify(token, KEY);
-        const users = db.collection('users');
-        const user = await users.findOne({ _id: new ObjectId(id) }); // Convert id to ObjectId
-
-        if (!user) {
-          return res.status(404).json({ status: 'error', message: 'User not found!' });
-        }
-
-        const { name, age, weight, gender } = user;
-        res.json({ status: 'success', user: { name, age, weight, gender } });
+          const decoded = jwt.verify(token, KEY);
+          const id = decoded.id; 
+  
+          const users = db.collection('users');
+          const user = await users.findOne({ _id: new ObjectId(id) });
+  
+          if (!user) {
+              return res.status(404).json({ status: 'error', message: 'User not found!' });
+          }
+  
+          const { name, age, weight, height, gender } = user;
+          res.json({ status: 'success', user: { name, age, weight, height, gender } });
       } catch (error) {
-        console.error('Error fetching profile:', error);
-        res.status(500).json({ status: 'error', message: 'Server error' });
+          console.error('Error fetching profile:', error);
+          res.status(500).json({ status: 'error', message: 'Server error' });
       }
-    });
+  });
 
 
     // WebSocket setup
