@@ -261,6 +261,62 @@ async function run() {
       }
   });
 
+  app.get("/workoutreports", async (req, res) =>{
+    try{
+      const token = req.header.authorization?.split(' ')[1];
+      if(!token) return res.status(401).json({status: 'error', message: 'Unauthorized'})
+
+      const decoded = jwt.verify(token, KEY);
+      const id = decoded.id;
+
+      const users = db.collection('users')
+      const workouts = await users.collection('workouts').find({userId: new ObjectId(id)}).toArray();
+
+      res.json(workouts);
+    }
+    catch(error){
+      console.error("Error Fetching Workout History!", error);
+      res.status(500).json({status: 'error', message: 'Server Error'});
+    }
+  });
+
+  app.post('/workoutreport', authenticateToken, async (req, res) => {
+    try {
+        const { time, exercises, startTime, endTime } = req.body;
+        
+        if (!time || !exercises || !startTime || !endTime) {
+            return res.status(400).json({ 
+                status: 'error', 
+                message: 'Missing required workout data' 
+            });
+        }
+
+        const workoutData = {
+            userId: new ObjectId(req.user.id),
+            time: Number(time),
+            exercises: exercises,
+            startTime: new Date(startTime),
+            endTime: new Date(endTime),
+            createdAt: new Date()
+        };
+
+        const result = await db.collection('workouts').insertOne(workoutData);
+        
+        res.json({
+            status: 'success',
+            message: 'Workout saved successfully',
+            insertedId: result.insertedId
+        });
+    } catch (error) {
+        console.error('Error saving workout:', error);
+        res.status(500).json({ 
+            status: 'error', 
+            message: 'Failed to save workout' 
+        });
+    }
+});
+
+
 
     // WebSocket setup
     const wsServer = new WebSocketServer({ noServer: true });
