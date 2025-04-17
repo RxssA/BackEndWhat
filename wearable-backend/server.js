@@ -15,17 +15,10 @@ app.use(cors());
 
 const buildPath = path.resolve('C:/Users/rossa/Desktop/WHAT/frontEnd/FrontEndWHAT/build');
 
-// Serve frontend static files
-app.use(express.static(buildPath));
-
-// Fallback for React Router
-app.get('*', (req, res) => {
-  res.sendFile(path.join(buildPath, 'index.html'));
-});
-
 // Connect to local MongoDB
 const url = process.env.MONGODB_URI || 'mongodb://127.0.0.1:27017/WHATProject';
 const KEY = process.env.SECRET_KEY;
+
 const client = new MongoClient(url, {
   useNewUrlParser: true,
   useUnifiedTopology: true,
@@ -40,10 +33,35 @@ let latestData = {
 
 async function run() {
   try {
+    console.log('Attempting to connect to MongoDB at:', url);
     await client.connect();
     console.log('Successfully connected to local MongoDB');
 
     const db = client.db('WHATProject');
+    
+    // Test the connection by listing collections
+    const collections = await db.listCollections().toArray();
+    console.log('Available collections:', collections.map(c => c.name));
+
+    // API Routes
+    app.get('/data/last10', async (req, res) => {
+      try {
+        console.log('Fetching last 10 records from sensorData collection');
+        const collection = db.collection('sensorData');
+        const data = await collection.find({}).sort({ timestamp: -1 }).limit(10).toArray();
+        if (data.length === 0) {
+          console.log('No data found in sensorData collection');
+        }
+        res.json(data.reverse());
+      } catch (error) {
+        console.error('Error fetching last 10 values:', error);
+        res.status(500).json({ 
+          status: 'error', 
+          message: 'Failed to fetch data',
+          error: error.message 
+        });
+      }
+    });
 
     // Authentication middleware
     const authenticateToken = (req, res, next) => {
@@ -66,17 +84,6 @@ async function run() {
         next();
       });
     };
-
-    app.get('/data/last10', async (req, res) => {
-      try {
-        const collection = db.collection('sensorData');
-        const data = await collection.find({}).sort({ timestamp: -1 }).limit(10).toArray();
-        res.json(data.reverse());
-      } catch (error) {
-        console.error('Error fetching last 10 values:', error);
-        res.status(500).json({ status: 'error', message: 'Failed to fetch data' });
-      }
-    });
 
     app.get("/runreports", authenticateToken, async (req, res) => {
       try {
@@ -232,6 +239,7 @@ async function run() {
         }
 
         const token = jwt.sign({ id: user._id.toString(), name: user.name }, KEY, { expiresIn: '1h' });
+        
         res.json({ status: 'success', token });
       } catch (error) {
         console.error('Error logging in:', error);
@@ -317,6 +325,27 @@ async function run() {
       }
     });
 
+    app.post('/test-data', async (req, res) => {
+      try {
+        const collection = db.collection('sensorData');
+        const testData = {
+          heartRate: 75,
+          averageHeartRate: 72,
+          highestHeartRate: 85,
+          lowestHeartRate: 65,
+          temperature: 36.6,
+          location: { lat: 53.270962, lng: -9.062691 },
+          timestamp: new Date().toISOString()
+        };
+        await collection.insertOne(testData);
+        console.log('Test data inserted successfully');
+        res.json({ status: 'success', message: 'Test data inserted' });
+      } catch (error) {
+        console.error('Error inserting test data:', error);
+        res.status(500).json({ status: 'error', message: 'Failed to insert test data' });
+      }
+    });
+
     // WebSocket setup
     const wsServer = new WebSocketServer({ noServer: true });
     const wsClients = new Set();
@@ -326,6 +355,14 @@ async function run() {
       ws.send(JSON.stringify(latestData));
 
       ws.on('close', () => wsClients.delete(ws));
+    });
+
+    // Serve frontend static files
+    app.use(express.static(buildPath));
+
+    // Fallback for React Router - must be after all API routes
+    app.get('*', (req, res) => {
+      res.sendFile(path.join(buildPath, 'index.html'));
     });
 
     const host = '192.168.0.23';
