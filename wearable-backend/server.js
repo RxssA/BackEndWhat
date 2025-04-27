@@ -38,8 +38,6 @@ async function run() {
     console.log('Successfully connected to local MongoDB');
 
     const db = client.db('WHATProject');
-    
-    // Test the connection by listing collections
     const collections = await db.listCollections().toArray();
     console.log('Available collections:', collections.map(c => c.name));
 
@@ -55,15 +53,14 @@ async function run() {
         res.json(data.reverse());
       } catch (error) {
         console.error('Error fetching last 10 values:', error);
-        res.status(500).json({ 
-          status: 'error', 
+        res.status(500).json({
+          status: 'error',
           message: 'Failed to fetch data',
-          error: error.message 
+          error: error.message
         });
       }
     });
 
-    // Authentication middleware
     const authenticateToken = (req, res, next) => {
       const authHeader = req.headers.authorization;
       if (!authHeader) {
@@ -79,7 +76,7 @@ async function run() {
         if (err) {
           return res.status(403).json({ message: 'Forbidden: Invalid or expired token' });
         }
-        console.log('Authenticated User:', user); // Debugging output
+        console.log('Authenticated User:', user);
         req.user = user;
         next();
       });
@@ -88,10 +85,12 @@ async function run() {
     app.get("/runreports", authenticateToken, async (req, res) => {
       try {
         const reportsCollection = client.db('WHATProject').collection('runReports');
-        const reports = await reportsCollection.find({ userId: req.user.id }).toArray();
+        const reports = await reportsCollection.find({
+          userId: new ObjectId(req.user.id)
+        }).toArray();
         res.json(reports);
       } catch (error) {
-        res.status(500).json({ message: "Error fetching walk reports" });
+        res.status(500).json({ message: "Error fetching run reports" });
       }
     });
 
@@ -110,7 +109,7 @@ async function run() {
         startTime,
         endTime,
         createdAt: new Date().toISOString(),
-        userId: req.user.id,
+        userId: new ObjectId(req.user.id),
       };
 
       try {
@@ -125,11 +124,18 @@ async function run() {
 
     app.get("/walkreports", authenticateToken, async (req, res) => {
       try {
-        const reportsCollection = client.db('WHATProject').collection('walkReports');
-        const reports = await reportsCollection.find({ userId: req.user.id }).toArray();
+        const reportsCollection = db.collection('walkReports');
+        const reports = await reportsCollection.find({
+          userId: new ObjectId(req.user.id)
+        }).toArray();
         res.json(reports);
       } catch (error) {
-        res.status(500).json({ message: "Error fetching walk reports" });
+        console.error('Error fetching walk reports:', error);
+        res.status(500).json({
+          status: 'error',
+          message: 'Error fetching walk reports',
+          error: error.message
+        });
       }
     });
 
@@ -137,7 +143,11 @@ async function run() {
       const { time, distance, path, caloriesBurned, pace, startTime, endTime } = req.body;
 
       if (!time || !distance || !path || !startTime || !endTime) {
-        return res.status(400).json({ status: 'error', message: 'Missing Walk report data' });
+        return res.status(400).json({
+          status: 'error',
+          message: 'Missing Walk report data',
+          required: ['time', 'distance', 'path', 'startTime', 'endTime']
+        });
       }
 
       const walkReport = {
@@ -149,33 +159,50 @@ async function run() {
         startTime,
         endTime,
         createdAt: new Date().toISOString(),
-        userId: req.user.id,
+        userId: new ObjectId(req.user.id)
       };
 
       try {
         const reportsCollection = db.collection('walkReports');
-        await reportsCollection.insertOne(walkReport);
-        res.json({ status: 'success', message: 'Walk report saved successfully!' });
+        const result = await reportsCollection.insertOne(walkReport);
+
+        if (!result.insertedId) {
+          throw new Error('Failed to insert walk report');
+        }
+
+        res.json({
+          status: 'success',
+          message: 'Walk report saved successfully!',
+          reportId: result.insertedId
+        });
       } catch (error) {
         console.error('Error saving walk report:', error);
-        res.status(500).json({ status: 'error', message: 'Failed to save Walk report' });
+        res.status(500).json({
+          status: 'error',
+          message: 'Failed to save Walk report',
+          error: error.message
+        });
       }
     });
 
-    app.post('/data', async (req, res) => {
+    app.post('/data', authenticateToken, async (req, res) => {
       if (!req.body || !req.body.heartRate || !req.body.temperature || !req.body.location) {
         return res.status(400).json({ status: 'error', message: 'Invalid data!' });
       }
 
-      latestData = {
+      const sensorData = {
         ...req.body,
+        userId: new ObjectId(req.user.id),
         timestamp: new Date().toISOString(),
       };
 
       try {
         const collection = db.collection('sensorData');
-        await collection.insertOne(latestData);
+        await collection.insertOne(sensorData);
         console.log('Data inserted into MongoDB');
+
+        // Update latestData for WebSocket clients
+        latestData = sensorData;
 
         wsClients.forEach((client) => {
           if (client.readyState === WebSocket.OPEN) {
@@ -187,6 +214,27 @@ async function run() {
       } catch (error) {
         console.error('Error inserting data:', error);
         res.status(500).json({ status: 'error', message: 'Failed to save data' });
+      }
+    });
+
+    app.get('/data/user', authenticateToken, async (req, res) => {
+      try {
+        const collection = db.collection('sensorData');
+        const data = await collection.find({
+          userId: new ObjectId(req.user.id)
+        }).sort({ timestamp: -1 }).limit(10).toArray();
+
+        if (data.length === 0) {
+          console.log('No data found for user');
+        }
+        res.json(data.reverse());
+      } catch (error) {
+        console.error('Error fetching user data:', error);
+        res.status(500).json({
+          status: 'error',
+          message: 'Failed to fetch user data',
+          error: error.message
+        });
       }
     });
 
@@ -206,22 +254,30 @@ async function run() {
         }
 
         const hashedPassword = await bcrypt.hash(password, 10);
-        await users.insertOne({ 
-          name, 
-          password: hashedPassword, 
-          age, 
-          weight, 
+        const result = await users.insertOne({
+          name,
+          password: hashedPassword,
+          age,
+          weight,
           gender,
-          height 
+          height
         });
 
-        res.json({ status: 'success', message: 'User registered successfully!' });
+        // Generate JWT token for the new user
+        const token = jwt.sign({ id: result.insertedId.toString(), name }, KEY, { expiresIn: '1h' });
+
+        res.json({
+          status: 'success',
+          message: 'User registered successfully!',
+          token
+        });
       } catch (error) {
         console.error('Error signing up:', error);
         res.status(500).json({ status: 'error', message: 'Server error' });
       }
     });
 
+    // Login endpoint to authenticate and issue a token for the ESP32
     app.post('/login', async (req, res) => {
       const { name, password } = req.body;
 
@@ -238,8 +294,9 @@ async function run() {
           return res.status(400).json({ status: 'error', message: 'Invalid credentials!' });
         }
 
+        // Issue JWT token
         const token = jwt.sign({ id: user._id.toString(), name: user.name }, KEY, { expiresIn: '1h' });
-        
+
         res.json({ status: 'success', token });
       } catch (error) {
         console.error('Error logging in:', error);
@@ -247,23 +304,11 @@ async function run() {
       }
     });
 
-    app.get('/profile', async (req, res) => {
-      const authHeader = req.headers.authorization;
-      if (!authHeader) {
-        return res.status(401).json({ status: 'error', message: 'Unauthorized' });
-      }
 
-      const token = authHeader.split(' ')[1];
-      if (!token) {
-        return res.status(401).json({ status: 'error', message: 'Token missing' });
-      }
-
+    app.get('/profile', authenticateToken, async (req, res) => {
       try {
-        const decoded = jwt.verify(token, KEY);
-        const id = decoded.id; 
-
         const users = db.collection('users');
-        const user = await users.findOne({ _id: new ObjectId(id) });
+        const user = await users.findOne({ _id: new ObjectId(req.user.id) });
 
         if (!user) {
           return res.status(404).json({ status: 'error', message: 'User not found!' });
@@ -277,21 +322,26 @@ async function run() {
       }
     });
 
-    app.get("/workoutreports", async (req, res) => {
+    app.get("/workoutHistory", authenticateToken, async (req, res) => {
       try {
-        const token = req.header.authorization?.split(' ')[1];
-        if (!token) return res.status(401).json({ status: 'error', message: 'Unauthorized' });
+        const workoutsCollection = db.collection('workouts');
+        const workouts = await workoutsCollection.find({
+          userId: new ObjectId(req.user.id)
+        }).toArray();
+        const formattedWorkouts = workouts.map(workout => ({
+          ...workout,
+          _id: workout._id.toString(),
+          userId: workout.userId.toString()
+        }));
 
-        const decoded = jwt.verify(token, KEY);
-        const id = decoded.id;
-
-        const users = db.collection('users');
-        const workouts = await users.collection('workouts').find({ userId: new ObjectId(id) }).toArray();
-
-        res.json(workouts);
+        res.json({ status: 'success', data: formattedWorkouts });
       } catch (error) {
-        console.error("Error Fetching Workout History!", error);
-        res.status(500).json({ status: 'error', message: 'Server Error' });
+        console.error("Error fetching workout history:", error);
+        res.status(500).json({
+          status: 'error',
+          message: 'Failed to fetch workout history',
+          error: error.message
+        });
       }
     });
 
@@ -325,28 +375,61 @@ async function run() {
       }
     });
 
-    app.post('/test-data', async (req, res) => {
+
+    app.delete('/walkreports/:id', authenticateToken, async (req, res) => {
       try {
-        const collection = db.collection('sensorData');
-        const testData = {
-          heartRate: 75,
-          averageHeartRate: 72,
-          highestHeartRate: 85,
-          lowestHeartRate: 65,
-          temperature: 36.6,
-          location: { lat: 53.270962, lng: -9.062691 },
-          timestamp: new Date().toISOString()
-        };
-        await collection.insertOne(testData);
-        console.log('Test data inserted successfully');
-        res.json({ status: 'success', message: 'Test data inserted' });
+        const result = await db.collection('walkReports').deleteOne({
+          _id: new ObjectId(req.params.id),
+          userId: new ObjectId(req.user.id)
+        });
+
+        if (result.deletedCount === 0) {
+          return res.status(404).json({ status: 'error', message: 'Report not found' });
+        }
+
+        res.json({ status: 'success', message: 'Walk report deleted' });
       } catch (error) {
-        console.error('Error inserting test data:', error);
-        res.status(500).json({ status: 'error', message: 'Failed to insert test data' });
+        console.error('Error deleting walk report:', error);
+        res.status(500).json({ status: 'error', message: 'Failed to delete walk report' });
       }
     });
 
-    // WebSocket setup
+    app.delete('/runreports/:id', authenticateToken, async (req, res) => {
+      try {
+        const result = await db.collection('runReports').deleteOne({
+          _id: new ObjectId(req.params.id),
+          userId: new ObjectId(req.user.id)
+        });
+
+        if (result.deletedCount === 0) {
+          return res.status(404).json({ status: 'error', message: 'Report not found' });
+        }
+
+        res.json({ status: 'success', message: 'Run report deleted' });
+      } catch (error) {
+        console.error('Error deleting run report:', error);
+        res.status(500).json({ status: 'error', message: 'Failed to delete run report' });
+      }
+    });
+
+    app.delete('/workoutHistory/:id', authenticateToken, async (req, res) => {
+      try {
+        const result = await db.collection('workouts').deleteOne({
+          _id: new ObjectId(req.params.id),
+          userId: new ObjectId(req.user.id)
+        });
+
+        if (result.deletedCount === 0) {
+          return res.status(404).json({ status: 'error', message: 'Workout not found' });
+        }
+
+        res.json({ status: 'success', message: 'Workout deleted' });
+      } catch (error) {
+        console.error('Error deleting workout:', error);
+        res.status(500).json({ status: 'error', message: 'Failed to delete workout' });
+      }
+    });
+
     const wsServer = new WebSocketServer({ noServer: true });
     const wsClients = new Set();
 
@@ -360,13 +443,13 @@ async function run() {
     // Serve frontend static files
     app.use(express.static(buildPath));
 
-    // Fallback for React Router - must be after all API routes
+    // Fallback for React Router
     app.get('*', (req, res) => {
       res.sendFile(path.join(buildPath, 'index.html'));
     });
 
-    const host = '192.168.0.23';
-    const server = app.listen(port, host, () => {
+    const host = '18.214.225.15';
+    const server = app.listen(port, '0.0.0.0', () => {
       console.log(`Server running at http://${host}:${port}`);
     });
 
